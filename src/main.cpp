@@ -25,6 +25,9 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+    // Load balancer refernece
+    std::unique_ptr<LoadBalancer> lb;
+
     // Rank 0 (root) parses arguments and launches load balancer
     try {
         if (rank == 0) {
@@ -130,10 +133,10 @@ int main(int argc, char** argv) {
                 fs::create_directory(logs_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
-                LoadBalancer lb(edgelist, existing_clustering, work_dir, log_level);
+                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, log_level);
 
                 // Spawn thread for runtime phase (job distribution)
-                std::thread lb_thread(&LoadBalancer::run, &lb);
+                std::thread lb_thread(&LoadBalancer::run, lb.get());
                 lb_thread.detach();
             }
 
