@@ -2,6 +2,7 @@
 #include <utils.hpp>
 #include <constants.hpp>
 #include <unordered_map>
+#include <algorithm>
 #include <set>
 #include <sstream>
 #include <fstream>
@@ -20,7 +21,7 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
     logger.info("LoadBalancer initialization starting");
 
     // Phase 1: Partition clustering into individual cluster files
-    std::vector<int> created_clusters = partition_clustering(edgelist, cluster_file, clusters_dir);
+    std::vector<ClusterInfo> created_clusters = partition_clustering(edgelist, cluster_file, clusters_dir);
 
     // Phase 2: Initialize job queue from created cluster files
     initialize_job_queue(created_clusters);
@@ -29,7 +30,7 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
 }
 
 // Partition clustering into separate cluster files
-std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
+std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& edgelist,
                                                      const std::string& cluster_file,
                                                      const std::string& output_dir) {
     logger.debug("Start partitioning initial clustering");
@@ -37,7 +38,7 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
     logger.debug(">> Clustering: " + cluster_file);
     logger.debug(">> Output directory: " + output_dir);
 
-    std::vector<int> created_clusters;  // Track which clusters were created
+    std::vector<ClusterInfo> created_clusters;  // Track which clusters were created
 
     // Get delimiters
     char edgelist_delimiter = get_delimiter(edgelist);
@@ -49,7 +50,8 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
     // Read clustering file: node_id -> cluster_id
     logger.debug("Reading clustering file...");
     std::unordered_map<int, int> node_to_cluster;
-    std::set<int> cluster_ids;
+    // std::set<int> cluster_ids;
+    std::unordered_map<int, ClusterInfo> clusters;
 
     std::ifstream clustering_stream(cluster_file);
     if (!clustering_stream.is_open()) {
@@ -73,12 +75,22 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
         int cluster_id = std::stoi(cluster_str);
 
         node_to_cluster[node_id] = cluster_id;
-        cluster_ids.insert(cluster_id);
+
+        if (clusters.count(cluster_id)) {
+            ++clusters[cluster_id].node_count;
+        } else {
+            ClusterInfo info;
+            info.cluster_id = cluster_id;
+            info.node_count = 1;
+            info.edge_count = 0;
+            clusters.insert({cluster_id, info});
+        }
+
         clustering_lines++;
     }
     clustering_stream.close();
     logger.debug("Read " + std::to_string(clustering_lines) + " nodes in " +
-                std::to_string(cluster_ids.size()) + " clusters");
+                std::to_string(clusters.size()) + " clusters");
 
     // Create storage for edges per cluster
     std::unordered_map<int, std::vector<std::pair<int, int>>> cluster_edges;
@@ -128,9 +140,12 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
     // Write out cluster files to output_dir
     logger.info("Writing cluster files to " + output_dir);
     int files_written = 0;
-    for (int cluster_id : cluster_ids) {
+    for (auto& [cluster_id, cluster_info] : clusters) {
         int edge_count = cluster_edges[cluster_id].size();
-        if (edge_count == 0) continue;  // cluster is completely disconnected, pass
+        if (edge_count == 0) {
+            continue;  // cluster is completely disconnected, pass
+        }
+        cluster_info.edge_count = edge_count;
 
         std::string filename = output_dir + "/" + std::to_string(cluster_id) + ".edgelist";
         std::ofstream out(filename);
@@ -148,9 +163,9 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
 
         out.close();
         files_written++;
-        created_clusters.emplace_back(cluster_id);  // Track this cluster
+        created_clusters.emplace_back(cluster_info);  // Track this cluster
 
-        if (files_written <= 5 || files_written == static_cast<int>(cluster_ids.size())) {
+        if (files_written <= 5 || files_written == static_cast<int>(clusters.size())) {
             logger.debug("Wrote cluster " + std::to_string(cluster_id) + " with " +
                         std::to_string(edge_count) + " edges to " + filename);
         }
@@ -162,17 +177,22 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
 }
 
 // Initialize job queue from created clusters
-void LoadBalancer::initialize_job_queue(const std::vector<int>& created_clusters) {
+void LoadBalancer::initialize_job_queue(const std::vector<ClusterInfo>& created_clusters) {
     logger.info("Initializing job queue with " + std::to_string(created_clusters.size()) + " clusters");
 
-    // Populate job queue with cluster IDs
-    for (int cluster_id : created_clusters) {
-        job_queue.push(cluster_id);
-    }
+    // Copy clusters to job_queue
+    unprocessed_clusters = created_clusters;
 
-    // TODO: sort the job greedily (most costly first).
+    // Sort by cost in descending order. This is a trick to make sorting and popping cheaper.
+    // Since we pop from the back, we want most costly at the end.
+    std::sort(unprocessed_clusters.begin(), unprocessed_clusters.end(),
+        [this](const ClusterInfo& a, const ClusterInfo& b) {
+            float cost_a = getCost(a.node_count, a.edge_count);
+            float cost_b = getCost(b.node_count, b.edge_count);
+            return cost_a < cost_b;  // Ascending order, so most costly is at the back
+        });
 
-    logger.info("Job queue initialized with " + std::to_string(job_queue.size()) + " jobs");
+    logger.info("Job queue initialized with " + std::to_string(unprocessed_clusters.size()) + " unprocessed clusters.");
 }
 
 // Runtime phase: Distribute jobs to workers
@@ -201,13 +221,19 @@ void LoadBalancer::run() {
             // Worker requests a job
             int assign_cluster;
 
-            if (!job_queue.empty()) {
-                assign_cluster = job_queue.front();
-                job_queue.pop();
+            if (!unprocessed_clusters.empty()) {
+                ClusterInfo cluster_info = unprocessed_clusters.back();
+                unprocessed_clusters.pop_back();
 
-                logger.info("Assigning cluster " + std::to_string(assign_cluster)
-                    + " to worker " + std::to_string(worker_rank)
-                    + " (" + std::to_string(job_queue.size()) + " jobs remaining)");
+                assign_cluster = cluster_info.cluster_id;
+                float cost = getCost(cluster_info.node_count, cluster_info.edge_count);
+
+                logger.info("Assigning cluster " + std::to_string(assign_cluster) +
+                    " (nodes: " + std::to_string(cluster_info.node_count) +
+                    ", edges: " + std::to_string(cluster_info.edge_count) +
+                    ", estimated cost: " + std::to_string(cost) + ")" +
+                    " to worker " + std::to_string(worker_rank) +
+                    " (" + std::to_string(unprocessed_clusters.size()) + " jobs remaining)");
 
             } else {
                 assign_cluster = NO_MORE_JOBS;
@@ -230,6 +256,6 @@ void LoadBalancer::run() {
 
 // Estimate the cost of a cluster
 float LoadBalancer::getCost(int node_count, int edge_count) {
-    float density = (2 * edge_count) / (node_count * (node_count - 1));
-    return node_count + (1 / density);
+    float density = (2.0f * edge_count) / (node_count * (node_count - 1));
+    return node_count + (1.0f / density);
 }

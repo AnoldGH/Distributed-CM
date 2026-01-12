@@ -4,24 +4,31 @@
 #include <vector>
 #include <queue>
 
+// Records information of clusters to be assigned. Used to estimate cost and determine priority, etc.
+struct ClusterInfo {
+    int cluster_id;
+    int node_count;     // number of nodes
+    int edge_count;     // number of edges
+};
+
 class LoadBalancer {
 private:
     Logger logger;
     std::string work_dir;
-    std::queue<int> job_queue;  // Queue of cluster IDs
+    std::vector<ClusterInfo> unprocessed_clusters;  // Vector of unprocessed clusters
 
     /**
      * Partition clustering into separate cluster files
      * Returns vector of created cluster IDs
      */
-    std::vector<int> partition_clustering(const std::string& edgelist,
+    std::vector<ClusterInfo> partition_clustering(const std::string& edgelist,
                                           const std::string& cluster_file,
                                           const std::string& output_dir);
 
     /**
      * Initialize job queue from created clusters
      */
-    void initialize_job_queue(const std::vector<int>& created_clusters);
+    void initialize_job_queue(const std::vector<ClusterInfo>& created_clusters);
 
 public:
     /**
