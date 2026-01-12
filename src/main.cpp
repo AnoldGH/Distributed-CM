@@ -167,10 +167,12 @@ int main(int argc, char** argv) {
     clusters_dir = work_dir + "/" + "clusters";
     logs_dir = work_dir + "/" + "logs";
     output_dir = work_dir + "/" + "output";
+    fs::create_directories(output_dir);
 
     // Initialize workers
     Logger worker_logger(logs_dir + "/" + "worker_" + std::to_string(rank) + ".log", log_level);
-    std::unique_ptr<Worker> worker = std::make_unique<Worker>(worker_logger);
+    std::unique_ptr<Worker> worker = std::make_unique<Worker>(
+        worker_logger, work_dir, connectedness_criterion, mincut_type, prune);
 
     // All ranks wait here until rank 0 completes initialization
     MPI_Barrier(MPI_COMM_WORLD);

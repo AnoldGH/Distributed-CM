@@ -1,5 +1,6 @@
 #include <load_balancer.hpp>
 #include <utils.hpp>
+#include <constants.hpp>
 #include <unordered_map>
 #include <set>
 #include <sstream>
@@ -182,6 +183,47 @@ void LoadBalancer::run() {
     // - Listen for job requests from workers (MPI_Recv with TAG_JOB_REQUEST)
     // - Send cluster IDs from job_queue (MPI_Send with TAG_JOB_RESPONSE)
     // - Send termination signals when queue is empty
+
+    int active_workers;
+    MPI_Comm_size(MPI_COMM_WORLD, &active_workers);
+
+    while (active_workers > 0) {
+        // Listen to incoming job requests
+        int message;
+        MPI_Status status;
+        MPI_Recv(&message, 1, MPI_INT, MPI_ANY_SOURCE, to_int(MessageType::WORK_REQUEST), MPI_COMM_WORLD, &status);
+
+        // Check message type
+        int worker_rank = status.MPI_SOURCE;
+        MessageType message_type = static_cast<MessageType>(status.MPI_TAG);
+
+        if (message_type == MessageType::WORK_REQUEST) {
+            // Worker requests a job
+            int assign_cluster;
+
+            if (!job_queue.empty()) {
+                assign_cluster = job_queue.front();
+                job_queue.pop();
+
+                logger.info("Assigning cluster " + std::to_string(assign_cluster)
+                    + " to worker " + std::to_string(worker_rank)
+                    + " (" + std::to_string(job_queue.size()) + " jobs remaining)");
+
+            } else {
+                assign_cluster = NO_MORE_JOBS;
+                logger.info("Sending termination signal to worker " + std::to_string(worker_rank));
+                --active_workers;
+            }
+
+            MPI_Send(&assign_cluster, 1, MPI_INT, worker_rank, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD);
+        } else if (message_type == MessageType::WORK_DONE) {
+            logger.info("Worker " + std::to_string(worker_rank) + " completed cluster " + std::to_string(message));
+        } else if (message_type == MessageType::WORK_ABORTED) {
+            logger.info("Worker " + std::to_string(worker_rank) + " aborted cluster " + std::to_string(message));
+        }
+    }
+
+    // TODO: termination
 
     logger.info("LoadBalancer runtime phase ended");
 }

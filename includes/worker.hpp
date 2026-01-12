@@ -6,8 +6,20 @@
 class Worker {
 private:
     Logger& logger;
+    std::string work_dir;
+    std::string connectedness_criterion;
+    std::string mincut_type;
+    bool prune;
+
+    /**
+     * Process a single cluster
+     * Returns true if successful, false if aborted
+     */
+    bool process_cluster(int cluster_id);
 
 public:
-    Worker(Logger& logger);
+    Worker(Logger& logger, const std::string& work_dir,
+           const std::string& connectedness_criterion,
+           const std::string& mincut_type, bool prune);
     void run();
 };
