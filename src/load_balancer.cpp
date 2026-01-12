@@ -53,6 +53,7 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
     // Read clustering file: node_id -> cluster_id
     logger.debug("Reading clustering file...");
     std::unordered_map<int, int> node_to_cluster;
+    std::unordered_map<int, std::set<int>> cluster_to_node;
     // std::set<int> cluster_ids;
     std::unordered_map<int, ClusterInfo> clusters;
 
@@ -78,6 +79,7 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
         int cluster_id = std::stoi(cluster_str);
 
         node_to_cluster[node_id] = cluster_id;
+        cluster_to_node[cluster_id].insert(node_id);
 
         if (clusters.count(cluster_id)) {
             ++clusters[cluster_id].node_count;
@@ -151,7 +153,9 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
         cluster_info.edge_count = edge_count;
 
         std::string filename = output_dir + "/" + std::to_string(cluster_id) + ".edgelist";
+        std::string cluster_filename = output_dir + "/" + std::to_string(cluster_id) + ".cluster";
         std::ofstream out(filename);
+        std::ofstream cluster_out(cluster_filename);
 
         if (!out.is_open()) {
             logger.error("Failed to create output file: " + filename);
@@ -159,12 +163,20 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
         }
 
         out << "source,target\n";
+        cluster_out << "node_id,cluster_id\n";
 
+        // Write edgelist
         for (const auto& edge : cluster_edges[cluster_id]) {
             out << edge.first << "," << edge.second << "\n";
         }
 
+        // Write cluster file
+        for (const auto& node : cluster_to_node[cluster_id]) {
+            cluster_out << node << "," << cluster_id << "\n";
+        }
+
         out.close();
+        cluster_out.close();
         files_written++;
         created_clusters.emplace_back(cluster_info);  // Track this cluster
 

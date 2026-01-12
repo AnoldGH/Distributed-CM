@@ -7,6 +7,9 @@ class Worker {
 private:
     Logger& logger;
     std::string work_dir;
+    std::string algorithm;
+    double clustering_parameter;
+    int log_level;
     std::string connectedness_criterion;
     std::string mincut_type;
     bool prune;
@@ -19,7 +22,8 @@ private:
 
 public:
     Worker(Logger& logger, const std::string& work_dir,
-           const std::string& connectedness_criterion,
+           const std::string& algorithm, double clustering_parameter,
+           int log_level, const std::string& connectedness_criterion,
            const std::string& mincut_type, bool prune);
     void run();
 };

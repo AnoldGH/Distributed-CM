@@ -1,15 +1,21 @@
 #include <mpi.h>
 #include <worker.hpp>
 #include <constants.hpp>
+#include <cm.h>
+#include <constrained.h>
 
 #include <fstream>
+#include <unistd.h>
+#include <sys/wait.h>
 
 // Constructor
 Worker::Worker(Logger& logger, const std::string& work_dir,
-               const std::string& connectedness_criterion,
+               const std::string& algorithm, double clustering_parameter,
+               int log_level, const std::string& connectedness_criterion,
                const std::string& mincut_type, bool prune)
     : logger(logger), work_dir(work_dir),
-      connectedness_criterion(connectedness_criterion),
+      algorithm(algorithm), clustering_parameter(clustering_parameter),
+      log_level(log_level), connectedness_criterion(connectedness_criterion),
       mincut_type(mincut_type), prune(prune) {}
 
 // Main run function
@@ -60,18 +66,42 @@ bool Worker::process_cluster(int cluster_id) {
     // TODO: implement actual cluster processing
     // For now, this is a placeholder that simulates work
 
-    std::string cluster_file = work_dir + "/clusters/" + std::to_string(cluster_id) + ".edgelist";
-    logger.debug("Processing cluster file: " + cluster_file);
+    std::string cluster_edgelist = work_dir + "/clusters/" + std::to_string(cluster_id) + ".edgelist";
+    std::string cluster_clustering_file = work_dir + "/clusters/" + std::to_string(cluster_id) + ".cluster";
+    logger.debug("Processing cluster file: " + cluster_edgelist);
 
-    // TODO: spawn a thread and call CM
+    logger.flush(); // to avoid duplicate logs after fork()
 
-    // TODO: dummy output logics
-    std::string output_file = work_dir + "/output/" + std::to_string(cluster_id) + ".output";
-    std::ofstream out(output_file);
+    // TODO: spawn a child process and call CM processing logic on it
+    // This is to gracefully handle OOM kills
 
-    out << "Dummy output" << std::endl;
+    int pid = fork();
+    if (pid == 0) {  // child process
+        logger.info("Child process starts on cluster " + std::to_string(cluster_id));
 
-    out.close();
+        // TODO: CM logic
+        std::string output_file = work_dir + "/output/" + std::to_string(cluster_id) + ".output";
+        std::string log_file = work_dir + "/logs/clusters/" + std::to_string(cluster_id) + ".log"; // TODO: since CC was built as a standalone app with its own logging system, we have to use a different file. In the future we should try to integrate the two systems into one unified logging system.
+
+        ConstrainedClustering* connectivity_modifier = new CM(cluster_edgelist, this->algorithm, this->clustering_parameter, cluster_clustering_file, 1, output_file, log_file, this->log_level, this->connectedness_criterion, this->prune, this->mincut_type);
+
+        connectivity_modifier->main();  // run CM
+
+        logger.info("Child process finishes cluster " + std::to_string(cluster_id));
+        exit(0);    // exits successfully
+    } else if (pid > 0) {    // control process
+        int status;
+        waitpid(pid, &status, 0);
+
+        // Check how child terminates
+        if (WIFEXITED(status)) {
+            logger.log("Child exited with code: " + std::to_string(WEXITSTATUS(status)));
+        } else {
+            logger.log("Child killed by signal: " + std::to_string(WTERMSIG(status)));
+        }
+    } else {
+        logger.log("Fork failed");  // TODO: this is serious. Need explicit handling
+    }
 
     return true;
 }

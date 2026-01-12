@@ -41,8 +41,12 @@ int main(int argc, char** argv) {
     bool prune;
     std::string mincut_type;
 
+    std::string algorithm;
+    double clustering_parameter;
+
     std::string clusters_dir;
     std::string logs_dir;
+    std::string logs_clusters_dir;
     std::string output_dir;
     std::string pending_dir;
 
@@ -116,8 +120,8 @@ int main(int argc, char** argv) {
 
             if (main_program.is_subcommand_used(cm)) {
                 edgelist = cm.get<std::string>("--edgelist");
-                // std::string algorithm = cm.get<std::string>("--algorithm");
-                // double clustering_parameter = cm.get<double>("--clustering-parameter");
+                algorithm = cm.get<std::string>("--algorithm");
+                clustering_parameter = cm.get<double>("--clustering-parameter");
                 existing_clustering = cm.get<std::string>("--existing-clustering");
                 output_file = cm.get<std::string>("--output-file");
                 work_dir = cm.get<std::string>("--work-dir");
@@ -139,8 +143,9 @@ int main(int argc, char** argv) {
                 // Ensure work-dir and sub-dir's exist
                 clusters_dir = work_dir + "/" + "clusters";
                 logs_dir = work_dir + "/" + "logs";
+                logs_clusters_dir = logs_dir + "/" + "clusters";
                 fs::create_directories(clusters_dir);
-                fs::create_directory(logs_dir);
+                fs::create_directories(logs_clusters_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
                 lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, log_level);
@@ -161,7 +166,9 @@ int main(int argc, char** argv) {
     bcast_string(work_dir, 0, MPI_COMM_WORLD);
     bcast_string(connectedness_criterion, 0, MPI_COMM_WORLD);
     bcast_string(mincut_type, 0, MPI_COMM_WORLD);
+    bcast_string(algorithm, 0, MPI_COMM_WORLD);
 
+    MPI_Bcast(&clustering_parameter, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&log_level, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&prune, 1, MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
 
@@ -175,7 +182,7 @@ int main(int argc, char** argv) {
     // Initialize workers
     Logger worker_logger(logs_dir + "/" + "worker_" + std::to_string(rank) + ".log", log_level);
     std::unique_ptr<Worker> worker = std::make_unique<Worker>(
-        worker_logger, work_dir, connectedness_criterion, mincut_type, prune);
+        worker_logger, work_dir, algorithm, clustering_parameter, log_level, connectedness_criterion, mincut_type, prune);
 
     // All ranks wait here until rank 0 completes initialization
     MPI_Barrier(MPI_COMM_WORLD);
