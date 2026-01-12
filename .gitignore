@@ -1,0 +1,8 @@
+build/
+datasets/
+external/
+work-dir/
+.*/
+
+test.sh
+compile_commands.json
