@@ -131,7 +131,7 @@ std::vector<int> LoadBalancer::partition_clustering(const std::string& edgelist,
         int edge_count = cluster_edges[cluster_id].size();
         if (edge_count == 0) continue;  // cluster is completely disconnected, pass
 
-        std::string filename = output_dir + "/" + std::to_string(cluster_id) + ".cluster";
+        std::string filename = output_dir + "/" + std::to_string(cluster_id) + ".edgelist";
         std::ofstream out(filename);
 
         if (!out.is_open()) {
