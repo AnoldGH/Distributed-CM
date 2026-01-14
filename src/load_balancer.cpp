@@ -179,11 +179,6 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
         cluster_out.close();
         files_written++;
         created_clusters.emplace_back(cluster_info);  // Track this cluster
-
-        if (files_written <= 5 || files_written == static_cast<int>(clusters.size())) {
-            logger.debug("Wrote cluster " + std::to_string(cluster_id) + " with " +
-                        std::to_string(edge_count) + " edges to " + filename);
-        }
     }
     logger.info("partition_clustering completed successfully. Wrote " +
                std::to_string(files_written) + " cluster files");
