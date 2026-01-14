@@ -15,9 +15,11 @@ namespace fs = std::filesystem;
 LoadBalancer::LoadBalancer(const std::string& edgelist,
                           const std::string& cluster_file,
                           const std::string& work_dir,
+                          const std::string& output_file,
                           int log_level)
     : logger(work_dir + "/logs/load_balancer.log", log_level),
-      work_dir(work_dir) {
+      work_dir(work_dir),
+      output_file(output_file) {
 
     const std::string clusters_dir = work_dir + "/" + "clusters";
 
@@ -249,7 +251,6 @@ void LoadBalancer::run() {
             } else {
                 assign_cluster = NO_MORE_JOBS;
                 logger.info("Sending termination signal to worker " + std::to_string(worker_rank));
-                --active_workers;
             }
 
             MPI_Send(&assign_cluster, 1, MPI_INT, worker_rank, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD);
@@ -263,11 +264,57 @@ void LoadBalancer::run() {
             }
         } else if (message_type == MessageType::WORK_ABORTED) {
             logger.info("Worker " + std::to_string(worker_rank) + " aborted cluster " + std::to_string(message));
+        } else if (message_type == MessageType::AGGREGATE_DONE) {
+            logger.info("Worker " + std::to_string(worker_rank) + " completed worker-level aggregation.");
+            --active_workers;
         }
     }
 
-    // TODO: termination
+    // TODO: termination phase
+    // Aggregate outputs
+    int start_cluster_id = 0;   // TODO: technically, we need to worry about overflows. Omit this for now.
+    std::string clusters_output_dir = work_dir + "/output/";
 
+    // Clean existing output file, if there is one
+    fs::remove(output_file);
+    std::ofstream out(output_file, std::ios::app);
+    out << "node_id,cluster_id\n";  // Header for first file
+
+    MPI_Comm_size(MPI_COMM_WORLD, &active_workers);
+    for (int i = 0; i < active_workers; ++i) {
+        int worker_rank = i;
+        std::string worker_output_file = clusters_output_dir + "worker_" + std::to_string(worker_rank) + ".out";
+
+        // Aggregation logic
+        std::ifstream in(worker_output_file);
+
+        std::string line;
+        std::getline(in, line);  // Skip header
+
+        int max_cluster_id = -1;
+        while (std::getline(in, line)) {
+            std::stringstream ss(line);
+            std::string node_str, cluster_str;
+            std::getline(ss, node_str, ',');
+            std::getline(ss, cluster_str, ',');
+
+            int node_id = std::stoi(node_str);
+            int cluster_id = std::stoi(cluster_str);
+            max_cluster_id = std::max(max_cluster_id, cluster_id);
+
+            out << node_id << "," << (cluster_id + start_cluster_id) << "\n";
+        }
+
+        in.close();
+        out.flush();
+
+        start_cluster_id += (max_cluster_id + 1);
+        --active_workers;
+
+        logger.info("Scanned worker " + std::to_string(worker_rank) + " output.");
+    }
+
+    logger.info("Program-level output aggregation completed.");
     logger.info("LoadBalancer runtime phase ended");
 }
 

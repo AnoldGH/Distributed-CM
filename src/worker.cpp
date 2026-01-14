@@ -5,8 +5,13 @@
 #include <constrained.h>
 
 #include <fstream>
+#include <sstream>
+#include <filesystem>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <algorithm>
+
+namespace fs = std::filesystem;
 
 // Constructor
 Worker::Worker(Logger& logger, const std::string& work_dir,
@@ -58,6 +63,54 @@ void Worker::run() {
         }
     }
 
+    // Aggregation phase: combine all output files into one worker-specific file
+    logger.info("Starting output aggregation");
+
+    std::string output_dir = work_dir + "/output/";
+    std::string worker_subdir = output_dir + "worker_" + std::to_string(rank) + "/";
+    std::string worker_output_file = output_dir + "worker_" + std::to_string(rank) + ".out";
+
+    std::ofstream out(worker_output_file);
+    out << "node_id,cluster_id\n";  // Header
+
+    int start_cluster_id = 0;
+
+    // Iterate over all files in the worker-specific subdirectory
+    for (const auto& entry : fs::directory_iterator(worker_subdir)) {
+        if (entry.is_regular_file()) {
+            std::string input_file = entry.path().string();
+            std::ifstream in(input_file);
+
+            std::string line;
+            std::getline(in, line);  // Skip header
+
+            int max_cluster_id = -1;
+            while (std::getline(in, line)) {
+                std::stringstream ss(line);
+                std::string node_str, cluster_str;
+                std::getline(ss, node_str, ',');
+                std::getline(ss, cluster_str, ',');
+
+                int node_id = std::stoi(node_str);
+                int cluster_id = std::stoi(cluster_str);
+                max_cluster_id = std::max(max_cluster_id, cluster_id);
+
+                out << node_id << "," << (cluster_id + start_cluster_id) << "\n";
+            }
+
+            in.close();
+            start_cluster_id += (max_cluster_id + 1);
+        }
+    }
+
+    out.close();
+    logger.info("Output aggregation complete. Worker output: " + worker_output_file);
+
+    // Send AGGREGATE_DONE signal to load balancer
+    int aggregate_msg = to_int(MessageType::AGGREGATE_DONE);
+    MPI_Send(&aggregate_msg, 1, MPI_INT, 0, to_int(MessageType::AGGREGATE_DONE), MPI_COMM_WORLD);
+    logger.info("Sent AGGREGATE_DONE signal to load balancer");
+
     logger.info("Worker runtime phase ended");
 }
 
@@ -65,6 +118,9 @@ void Worker::run() {
 bool Worker::process_cluster(int cluster_id) {
     // TODO: implement actual cluster processing
     // For now, this is a placeholder that simulates work
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     std::string cluster_edgelist = work_dir + "/clusters/" + std::to_string(cluster_id) + ".edgelist";
     std::string cluster_clustering_file = work_dir + "/clusters/" + std::to_string(cluster_id) + ".cluster";
@@ -80,7 +136,7 @@ bool Worker::process_cluster(int cluster_id) {
         logger.info("Child process starts on cluster " + std::to_string(cluster_id));
 
         // TODO: CM logic
-        std::string output_file = work_dir + "/output/" + std::to_string(cluster_id) + ".output";
+        std::string output_file = work_dir + "/output/worker_" + std::to_string(rank) + "/" + std::to_string(cluster_id) + ".output";
         std::string log_file = work_dir + "/logs/clusters/" + std::to_string(cluster_id) + ".log"; // TODO: since CC was built as a standalone app with its own logging system, we have to use a different file. In the future we should try to integrate the two systems into one unified logging system.
 
         ConstrainedClustering* connectivity_modifier = new CM(cluster_edgelist, this->algorithm, this->clustering_parameter, cluster_clustering_file, 1, output_file, log_file, this->log_level, this->connectedness_criterion, this->prune, this->mincut_type);

@@ -15,6 +15,7 @@ class LoadBalancer {
 private:
     Logger logger;
     std::string work_dir;
+    std::string output_file;
     std::vector<ClusterInfo> unprocessed_clusters;  // Vector of unprocessed clusters
 
     /**
@@ -40,6 +41,7 @@ public:
     LoadBalancer(const std::string& edgelist,
                 const std::string& cluster_file,
                 const std::string& work_dir,
+                const std::string& output_file,
                 int log_level);
 
     /**

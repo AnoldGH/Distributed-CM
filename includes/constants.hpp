@@ -6,9 +6,10 @@ enum class MessageType: int {
     WORK_REQUEST = 0,   // requesting a cluster to be processed
     WORK_DONE = 1,      // the processing of the assigned cluster is completed successfully
     WORK_ABORTED = 2,   // the processing of the assigned cluster is aborted
+    AGGREGATE_DONE = 3, // aggregation of results completed
 
     // LB to Worker
-    DISTRIBUTE_WORK = 3,    // distribute a cluster to be processed
+    DISTRIBUTE_WORK = 4,    // distribute a cluster to be processed
 };
 
 constexpr int to_int(MessageType messageType) {

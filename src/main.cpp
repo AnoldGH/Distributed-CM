@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
                 fs::create_directories(logs_clusters_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
-                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, log_level);
+                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level);
 
                 // Spawn thread for runtime phase (job distribution)
                 lb_thread = std::thread(&LoadBalancer::run, lb.get());
@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
 
     clusters_dir = work_dir + "/" + "clusters";
     logs_dir = work_dir + "/" + "logs";
-    output_dir = work_dir + "/" + "output";
+    output_dir = work_dir + "/" + "output/worker_" + std::to_string(rank);
     pending_dir = work_dir + "/" + "pending";
     fs::create_directories(output_dir);
     fs::create_directory(pending_dir);          // TODO: this is not a clean to do this
