@@ -16,11 +16,13 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
                           const std::string& cluster_file,
                           const std::string& work_dir,
                           const std::string& output_file,
+                          const std::string& history_file,
                           int log_level,
                           bool use_rank_0_worker)
     : logger(work_dir + "/logs/load_balancer.log", log_level),
       work_dir(work_dir),
       output_file(output_file),
+      history_file(history_file),
       use_rank_0_worker(use_rank_0_worker) {
 
     const std::string clusters_dir = work_dir + "/" + "clusters";
@@ -183,6 +185,7 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
         cluster_out.close();
         files_written++;
         created_clusters.emplace_back(cluster_info);  // Track this cluster
+        original_cluster_ids.insert(cluster_id);      // Track original cluster ID for history aggregation
     }
     logger.info("partition_clustering completed successfully. Wrote " +
                std::to_string(files_written) + " cluster files");
@@ -275,14 +278,21 @@ void LoadBalancer::run() {
     // Aggregation phase: combine outputs from all workers
     int start_cluster_id = 0;
     std::string clusters_output_dir = work_dir + "/output/";
+    std::string history_dir = work_dir + "/history/";
 
     fs::remove(output_file);
     std::ofstream out(output_file, std::ios::app);
     out << "node_id,cluster_id\n";
 
+    // Track offset for each worker for history aggregation
+    std::unordered_map<int, int> worker_offset_map;
+
     int first_worker = use_rank_0_worker ? 0 : 1;
     for (int worker_rank = first_worker; worker_rank < size; ++worker_rank) {
         std::string worker_output_file = clusters_output_dir + "worker_" + std::to_string(worker_rank) + ".out";
+
+        // Record offset for this worker before processing
+        worker_offset_map[worker_rank] = start_cluster_id;
 
         // Aggregation logic
         std::ifstream in(worker_output_file);
@@ -311,7 +321,83 @@ void LoadBalancer::run() {
         logger.info("Scanned worker " + std::to_string(worker_rank) + " output.");
     }
 
+    out.close();
     logger.info("Program-level output aggregation completed.");
+
+    // History aggregation phase: combine history from all workers
+    logger.info("Starting program-level history aggregation");
+
+    fs::remove(history_file);
+    std::ofstream hist_out(history_file, std::ios::app);
+
+    bool first_block = true;  // Track if this is the first original cluster block
+
+    for (int worker_rank = first_worker; worker_rank < size; ++worker_rank) {
+        std::string worker_history_file = history_dir + "worker_" + std::to_string(worker_rank) + ".hist";
+        int offset = worker_offset_map[worker_rank];
+
+        std::ifstream hist_in(worker_history_file);
+        if (!hist_in.is_open()) {
+            logger.error("Failed to open worker history file: " + worker_history_file);
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(hist_in, line)) {
+            if (line.empty()) continue;
+
+            // Parse line format: "parent_id:child_id1,child_id2,..."
+            size_t colon_pos = line.find(':');
+            if (colon_pos == std::string::npos) continue;
+
+            std::string parent_str = line.substr(0, colon_pos);
+            std::string children_str = line.substr(colon_pos + 1);
+
+            int parent_id = std::stoi(parent_str);
+
+            // Check if this is a new original cluster block
+            bool is_original_cluster = (original_cluster_ids.find(parent_id) != original_cluster_ids.end());
+
+            // Add newline separator between original cluster blocks
+            if (is_original_cluster) {
+                if (!first_block) {
+                    hist_out << "\n";
+                }
+                first_block = false;
+            }
+
+            // Remap parent ID (except original cluster IDs which stay unchanged)
+            if (!is_original_cluster) {
+                parent_id += offset;
+            }
+
+            // Remap all child IDs (all children get remapped)
+            std::stringstream children_ss(children_str);
+            std::string child_str;
+            std::vector<int> remapped_children;
+
+            while (std::getline(children_ss, child_str, ',')) {
+                if (!child_str.empty()) {
+                    int child_id = std::stoi(child_str);
+                    remapped_children.push_back(child_id + offset);
+                }
+            }
+
+            // Write remapped line
+            hist_out << parent_id << ":";
+            for (size_t i = 0; i < remapped_children.size(); ++i) {
+                if (i > 0) hist_out << ",";
+                hist_out << remapped_children[i];
+            }
+            hist_out << "\n";
+        }
+
+        hist_in.close();
+        logger.info("Scanned worker " + std::to_string(worker_rank) + " history.");
+    }
+
+    hist_out.close();
+    logger.info("Program-level history aggregation completed.");
     logger.info("LoadBalancer runtime phase ended");
 }
 

@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
     std::string edgelist;
     std::string existing_clustering;
     std::string output_file;
+    std::string history_file;
     std::string work_dir;
     int log_level;
     std::string connectedness_criterion;
@@ -87,6 +88,9 @@ int main(int argc, char** argv) {
             cm.add_argument("--output-file")
                 .required()
                 .help("Output clustering file");
+            cm.add_argument("--history-file")
+                .default_value("")
+                .help("Output history file (defaults to output-file with .hist extension replacing the original extension)");
             cm.add_argument("--work-dir")
                 .default_value("dcm-work-dir")
                 .help("Directory to store intermediate results. Can be used to restore progress.");
@@ -131,6 +135,16 @@ int main(int argc, char** argv) {
                 clustering_parameter = cm.get<double>("--clustering-parameter");
                 existing_clustering = cm.get<std::string>("--existing-clustering");
                 output_file = cm.get<std::string>("--output-file");
+                history_file = cm.get<std::string>("--history-file");
+                if (history_file.empty()) {
+                    // Default: derive from output_file by replacing extension with .hist
+                    size_t dot_pos = output_file.rfind('.');
+                    if (dot_pos != std::string::npos) {
+                        history_file = output_file.substr(0, dot_pos) + ".hist";
+                    } else {
+                        history_file = output_file + ".hist";
+                    }
+                }
                 work_dir = cm.get<std::string>("--work-dir");
                 // std::string log_file = cm.get<std::string>("--log-file");
                 log_level = cm.get<int>("--log-level") - 1; // so that enum is cleaner
@@ -155,7 +169,7 @@ int main(int argc, char** argv) {
                 fs::create_directories(logs_clusters_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
-                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker);
+                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, history_file, log_level, use_rank_0_worker);
 
                 // Spawn thread for runtime phase (job distribution)
                 lb_thread = std::thread(&LoadBalancer::run, lb.get());

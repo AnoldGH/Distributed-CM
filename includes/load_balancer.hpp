@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <unordered_set>
 
 // Records information of clusters to be assigned. Used to estimate cost and determine priority, etc.
 struct ClusterInfo {
@@ -16,8 +17,10 @@ private:
     Logger logger;
     std::string work_dir;
     std::string output_file;
+    std::string history_file;
     bool use_rank_0_worker;
     std::vector<ClusterInfo> unprocessed_clusters;  // Vector of unprocessed clusters
+    std::unordered_set<int> original_cluster_ids;   // Set of original cluster IDs (for history aggregation)
 
     /**
      * Partition clustering into separate cluster files
@@ -43,6 +46,7 @@ public:
                 const std::string& cluster_file,
                 const std::string& work_dir,
                 const std::string& output_file,
+                const std::string& history_file,
                 int log_level,
                 bool use_rank_0_worker);
 

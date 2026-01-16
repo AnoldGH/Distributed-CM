@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <algorithm>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -78,11 +79,18 @@ void Worker::run() {
     out << "node_id,cluster_id\n";  // Header
 
     int start_cluster_id = 0;
+    std::unordered_map<int, int> cluster_offset_map;  // Maps original cluster ID -> offset
 
     // Iterate over all files in the worker-specific subdirectory
     for (const auto& entry : fs::directory_iterator(worker_subdir)) {
         if (entry.is_regular_file()) {
             std::string input_file = entry.path().string();
+
+            // Extract original cluster ID from filename (e.g., "8671.output" -> 8671)
+            std::string filename = entry.path().stem().string();
+            int original_cluster_id = std::stoi(filename);
+            cluster_offset_map[original_cluster_id] = start_cluster_id;
+
             std::ifstream in(input_file);
 
             std::string line;
@@ -109,6 +117,86 @@ void Worker::run() {
 
     out.close();
     logger.info("Output aggregation complete. Worker output: " + worker_output_file);
+
+    // History aggregation phase: combine all history files using the same offset mapping
+    logger.info("Starting history aggregation");
+
+    std::string history_dir = work_dir + "/history/";
+    std::string history_subdir = history_dir + "worker_" + std::to_string(rank) + "/";
+    std::string worker_history_file = history_dir + "worker_" + std::to_string(rank) + ".hist";
+
+    std::ofstream hist_out(worker_history_file);
+
+    // Iterate over all history files in the worker-specific subdirectory
+    for (const auto& entry : fs::directory_iterator(history_subdir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".hist") {
+            std::string history_file = entry.path().string();
+
+            // Extract original cluster ID from filename (e.g., "8671.hist" -> 8671)
+            std::string filename = entry.path().stem().string();
+            int original_cluster_id = std::stoi(filename);
+
+            // Get the offset for this cluster
+            if (cluster_offset_map.find(original_cluster_id) == cluster_offset_map.end()) {
+                logger.error("No offset found for cluster " + std::to_string(original_cluster_id));
+                continue;
+            }
+            int offset = cluster_offset_map[original_cluster_id];
+
+            std::ifstream hist_in(history_file);
+            std::string line;
+            int init_cluster_id = -1;  // Will be set from the -1:X line
+
+            while (std::getline(hist_in, line)) {
+                if (line.empty()) continue;
+
+                // Parse line format: "parent_id:child_id1,child_id2,..."
+                size_t colon_pos = line.find(':');
+                if (colon_pos == std::string::npos) continue;
+
+                std::string parent_str = line.substr(0, colon_pos);
+                std::string children_str = line.substr(colon_pos + 1);
+
+                int parent_id = std::stoi(parent_str);
+
+                // Skip the -1:init_cluster_id line, but record the init_cluster_id
+                if (parent_id == -1) {
+                    init_cluster_id = std::stoi(children_str);
+                    continue;
+                }
+
+                // Remap parent ID (except the initial cluster ID which stays unchanged)
+                if (parent_id != init_cluster_id) {
+                    parent_id += offset;
+                }
+
+                // Remap all child IDs (all children get remapped)
+                std::stringstream children_ss(children_str);
+                std::string child_str;
+                std::vector<int> remapped_children;
+
+                while (std::getline(children_ss, child_str, ',')) {
+                    if (!child_str.empty()) {
+                        int child_id = std::stoi(child_str);
+                        remapped_children.push_back(child_id + offset);
+                    }
+                }
+
+                // Write remapped line
+                hist_out << parent_id << ":";
+                for (size_t i = 0; i < remapped_children.size(); ++i) {
+                    if (i > 0) hist_out << ",";
+                    hist_out << remapped_children[i];
+                }
+                hist_out << "\n";
+            }
+
+            hist_in.close();
+        }
+    }
+
+    hist_out.close();
+    logger.info("History aggregation complete. Worker history: " + worker_history_file);
 
     // Send AGGREGATE_DONE signal to load balancer
     int aggregate_msg = to_int(MessageType::AGGREGATE_DONE);
