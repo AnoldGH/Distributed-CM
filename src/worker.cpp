@@ -153,6 +153,7 @@ bool Worker::process_cluster(int cluster_id) {
     } else if (pid > 0) {    // control process
         int status;
         waitpid(pid, &status, 0);
+        logger.flush();
 
         // Check how child terminates
         if (WIFEXITED(status)) {
@@ -166,5 +167,5 @@ bool Worker::process_cluster(int cluster_id) {
         logger.log("Fork failed");  // TODO: this is serious. Need explicit handling
     }
 
-    return true;
+    return false;   // fallback to false
 }
