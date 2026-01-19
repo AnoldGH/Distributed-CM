@@ -17,7 +17,8 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
                           const std::string& work_dir,
                           const std::string& output_file,
                           int log_level,
-                          bool use_rank_0_worker)
+                          bool use_rank_0_worker,
+                          const std::string& partitioned_clusters_dir)
     : logger(work_dir + "/logs/load_balancer.log", log_level),
       work_dir(work_dir),
       output_file(output_file),
@@ -27,8 +28,16 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
 
     logger.info("LoadBalancer initialization starting");
 
-    // Phase 1: Partition clustering into individual cluster files
-    std::vector<ClusterInfo> created_clusters = partition_clustering(edgelist, cluster_file, clusters_dir);
+    std::vector<ClusterInfo> created_clusters;
+
+    // Phase 1: Load or partition clusters
+    if (!partitioned_clusters_dir.empty()) {
+        logger.info("Loading pre-partitioned clusters from: " + partitioned_clusters_dir);
+        created_clusters = load_partitioned_clusters(partitioned_clusters_dir);
+    } else {
+        logger.info("Partitioning clustering into individual cluster files");
+        created_clusters = partition_clustering(edgelist, cluster_file, clusters_dir);
+    }
 
     // Phase 2: Initialize job queue from created cluster files
     initialize_job_queue(created_clusters);
@@ -188,6 +197,66 @@ std::vector<ClusterInfo> LoadBalancer::partition_clustering(const std::string& e
                std::to_string(files_written) + " cluster files");
 
     return created_clusters;
+}
+
+// Load cluster info from pre-partitioned directory
+std::vector<ClusterInfo> LoadBalancer::load_partitioned_clusters(const std::string& partitioned_dir) {
+    logger.debug("Loading clusters from: " + partitioned_dir);
+
+    std::vector<ClusterInfo> clusters;
+
+    for (const auto& entry : fs::directory_iterator(partitioned_dir)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string filename = entry.path().filename().string();
+
+        /**
+         * TODO: for now, we assume files in the directory to be named in the following way:
+         * Edgelist:            ${cluster_id}.edgelist
+         * Clustering (dummy):  ${cluster_id}.cluster
+         */
+
+        // Only process .edgelist files
+        if (filename.size() < 9 || filename.substr(filename.size() - 9) != ".edgelist") {
+            continue;
+        }
+
+        // Extract cluster_id from filename
+        int cluster_id = std::stoi(filename.substr(0, filename.size() - 9));
+
+        // Count edges
+        std::ifstream edgelist_file(entry.path());
+        int edge_count = 0;
+        std::string line;
+        std::getline(edgelist_file, line);  // skip header
+        while (std::getline(edgelist_file, line)) {
+            edge_count++;
+        }
+        edgelist_file.close();
+
+        // Count nodes from .cluster file
+        std::string cluster_file_path = partitioned_dir + "/" + std::to_string(cluster_id) + ".cluster";
+        std::ifstream cluster_file(cluster_file_path);
+        int node_count = 0;
+        std::getline(cluster_file, line);  // skip header
+        while (std::getline(cluster_file, line)) {
+            node_count++;
+        }
+        cluster_file.close();
+
+        ClusterInfo info;
+        info.cluster_id = cluster_id;
+        info.node_count = node_count;
+        info.edge_count = edge_count;
+        clusters.push_back(info);
+
+        logger.debug("Loaded cluster " + std::to_string(cluster_id) +
+                    " (nodes=" + std::to_string(node_count) +
+                    ", edges=" + std::to_string(edge_count) + ")");
+    }
+
+    logger.info("Loaded " + std::to_string(clusters.size()) + " clusters from " + partitioned_dir);
+    return clusters;
 }
 
 // Initialize job queue from created clusters

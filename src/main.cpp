@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
     std::string logs_clusters_dir;
     std::string output_dir;
     std::string pending_dir;
+    std::string partitioned_clusters_dir;
 
     // Rank 0 (root) parses arguments and launches load balancer
     try {
@@ -115,6 +116,9 @@ int main(int argc, char** argv) {
                 .default_value(int(-1))
                 .help("Time limit in seconds for each cluster (-1 = no limit)")
                 .scan<'d', int>();
+            cm.add_argument("--partitioned-clusters-dir")
+                .default_value(std::string(""))
+                .help("Path to pre-partitioned clusters directory (skips partitioning if provided)");
 
             // TODO: support WCC in the future?
 
@@ -147,6 +151,7 @@ int main(int argc, char** argv) {
                 }
                 mincut_type = cm.get<std::string>("--mincut-type");
                 time_limit_per_cluster = cm.get<int>("--time-limit-per-cluster");
+                partitioned_clusters_dir = cm.get<std::string>("--partitioned-clusters-dir");
 
                 /**
                  * TODO: checkpointing
@@ -161,7 +166,7 @@ int main(int argc, char** argv) {
                 fs::create_directories(logs_clusters_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
-                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker);
+                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker, partitioned_clusters_dir);
 
                 // Spawn thread for runtime phase (job distribution)
                 lb_thread = std::thread(&LoadBalancer::run, lb.get());
