@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <algorithm>
 
 namespace fs = std::filesystem;
@@ -158,6 +159,7 @@ bool Worker::process_cluster(int cluster_id) {
     } else if (pid > 0) {    // control process
         int status;
         bool timed_out = false;
+        struct rusage usage;
 
         // With timeout: use timer thread
         if (time_limit_per_cluster > 0) {
@@ -175,7 +177,7 @@ bool Worker::process_cluster(int cluster_id) {
                 }
             });
 
-            waitpid(pid, &status, 0);
+            wait4(pid, &status, 0, &usage);
             logger.flush();
 
             // Wake up timer thread
@@ -186,9 +188,12 @@ bool Worker::process_cluster(int cluster_id) {
             cv.notify_one();
             timer.join();
         } else {    // no timeout: execute and wait for status
-            waitpid(pid, &status, 0);
+            wait4(pid, &status, 0, &usage);
             logger.flush();
         }
+
+        // Log peak memory usage
+        logger.log("Cluster " + std::to_string(cluster_id) + " peak memory: " + std::to_string(usage.ru_maxrss / 1024) + " MB");
 
         if (timed_out) {
             logger.log("Timeout. Child was killed after " + std::to_string(time_limit_per_cluster) + " seconds");
