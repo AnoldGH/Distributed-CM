@@ -52,7 +52,8 @@ public:
                 const std::string& output_file,
                 int log_level,
                 bool use_rank_0_worker,
-                const std::string& partitioned_clusters_dir = "");
+                const std::string& partitioned_clusters_dir = "",
+                bool partition_only = false);
 
     /**
      * Runtime phase: Distribute jobs to workers
