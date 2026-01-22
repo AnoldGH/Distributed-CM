@@ -19,11 +19,13 @@ LoadBalancer::LoadBalancer(const std::string& edgelist,
                           int log_level,
                           bool use_rank_0_worker,
                           const std::string& partitioned_clusters_dir,
-                          bool partition_only)
+                          bool partition_only,
+                          float min_batch_cost)
     : logger(work_dir + "/logs/load_balancer.log", log_level),
       work_dir(work_dir),
       output_file(output_file),
-      use_rank_0_worker(use_rank_0_worker) {
+      use_rank_0_worker(use_rank_0_worker),
+      min_batch_cost(min_batch_cost) {
 
     const std::string clusters_dir = work_dir + "/" + "clusters";
     std::string summary_filename = partitioned_clusters_dir + "/summary.csv";
@@ -292,29 +294,34 @@ void LoadBalancer::run() {
 
         if (message_type == MessageType::WORK_REQUEST) {
             // Worker requests a job
-            int assign_cluster;
+            std::vector<int> assign_clusters;   // clusters to assign
+            float batch_cost = 0;
 
             if (!unprocessed_clusters.empty()) {
-                ClusterInfo cluster_info = unprocessed_clusters.back();
-                unprocessed_clusters.pop_back();
+                while (!unprocessed_clusters.empty() && batch_cost < min_batch_cost) {
+                    ClusterInfo cluster_info = unprocessed_clusters.back();
+                    unprocessed_clusters.pop_back();
 
-                assign_cluster = cluster_info.cluster_id;
-                float cost = getCost(cluster_info.node_count, cluster_info.edge_count);
+                    assign_clusters.push_back(cluster_info.cluster_id);
 
-                logger.info("Assigning cluster " + std::to_string(assign_cluster) +
-                    " (nodes: " + std::to_string(cluster_info.node_count) +
-                    ", edges: " + std::to_string(cluster_info.edge_count) +
-                    ", estimated cost: " + std::to_string(cost) + ")" +
-                    " to worker " + std::to_string(worker_rank) +
-                    " (" + std::to_string(unprocessed_clusters.size()) + " jobs remaining)");
+                    float cost = getCost(cluster_info.node_count, cluster_info.edge_count);
+                    batch_cost += cost;
 
-                std::ofstream pending_out(work_dir + "/" + "pending" + "/" + std::to_string(assign_cluster));
+                    logger.info("Assigning cluster " + std::to_string(cluster_info.cluster_id) +
+                        " (nodes: " + std::to_string(cluster_info.node_count) +
+                        ", edges: " + std::to_string(cluster_info.edge_count) +
+                        ", estimated cost: " + std::to_string(cost) + ")" +
+                        " to worker " + std::to_string(worker_rank) +
+                        " (" + std::to_string(unprocessed_clusters.size()) + " jobs remaining)");
+
+                    std::ofstream pending_out(work_dir + "/" + "pending" + "/" + std::to_string(cluster_info.cluster_id));
+                }
             } else {
-                assign_cluster = NO_MORE_JOBS;
+                assign_clusters.push_back(NO_MORE_JOBS);
                 logger.info("Sending termination signal to worker " + std::to_string(worker_rank));
             }
 
-            MPI_Send(&assign_cluster, 1, MPI_INT, worker_rank, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD);
+            MPI_Send(assign_clusters.data(), assign_clusters.size(), MPI_INT, worker_rank, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD);
         } else if (message_type == MessageType::WORK_DONE) {
             logger.info("Worker " + std::to_string(worker_rank) + " completed cluster " + std::to_string(message));
 

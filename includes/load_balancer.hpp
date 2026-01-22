@@ -17,6 +17,7 @@ private:
     std::string work_dir;
     std::string output_file;
     bool use_rank_0_worker;
+    float min_batch_cost;
     std::vector<ClusterInfo> unprocessed_clusters;  // Vector of unprocessed clusters
 
     /**
@@ -53,7 +54,8 @@ public:
                 int log_level,
                 bool use_rank_0_worker,
                 const std::string& partitioned_clusters_dir = "",
-                bool partition_only = false);
+                bool partition_only = false,
+                float min_batch_cost = 200);
 
     /**
      * Runtime phase: Distribute jobs to workers

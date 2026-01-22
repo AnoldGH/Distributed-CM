@@ -47,29 +47,39 @@ void Worker::run() {
         int request_msg = to_int(MessageType::WORK_REQUEST);
         MPI_Send(&request_msg, 1, MPI_INT, 0, to_int(MessageType::WORK_REQUEST), MPI_COMM_WORLD);
 
-        // Receive cluster ID from load balancer
-        int assigned_cluster;
-        MPI_Recv(&assigned_cluster, 1, MPI_INT, 0, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // Receive cluster IDs from load balancer
+        MPI_Status status;
+        MPI_Probe(0, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD, &status);
+
+        // Learn how many assigned clusters there are
+        int count;
+        MPI_Get_count(&status, MPI_INT, &count);
+
+        // Resize vector and receive assigned clusters
+        std::vector<int> assigned_clusters(count);
+        MPI_Recv(assigned_clusters.data(), count, MPI_INT, 0, to_int(MessageType::DISTRIBUTE_WORK), MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         // Check for termination signal
-        if (assigned_cluster == NO_MORE_JOBS) {
+        if (assigned_clusters[0] == NO_MORE_JOBS) {
             logger.info("No more jobs available, terminating worker");
             break;
         }
 
-        logger.info("Received cluster " + std::to_string(assigned_cluster));
+        for (const auto& cluster : assigned_clusters) {
+            logger.info("Received cluster " + std::to_string(cluster));
 
-        // Process the cluster
-        bool success = process_cluster(assigned_cluster);
+            // Process the cluster
+            bool success = process_cluster(cluster);
 
-        // Send completion status
-        MessageType status_type = success ? MessageType::WORK_DONE : MessageType::WORK_ABORTED;
-        MPI_Send(&assigned_cluster, 1, MPI_INT, 0, to_int(status_type), MPI_COMM_WORLD);    // inform load balancer success / failure
+            // Send completion status
+            MessageType status_type = success ? MessageType::WORK_DONE : MessageType::WORK_ABORTED;
+            MPI_Send(&cluster, 1, MPI_INT, 0, to_int(status_type), MPI_COMM_WORLD);    // inform load balancer success / failure
 
-        if (success) {
-            logger.info("Completed cluster " + std::to_string(assigned_cluster));
-        } else {
-            logger.info("Aborted cluster " + std::to_string(assigned_cluster));
+            if (success) {
+                logger.info("Completed cluster " + std::to_string(cluster));
+            } else {
+                logger.info("Aborted cluster " + std::to_string(cluster));
+            }
         }
     }
 

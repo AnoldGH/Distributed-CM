@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
     std::string mincut_type;
     int time_limit_per_cluster;
     bool partition_only;
+    float min_batch_cost;
 
     std::string algorithm;
     double clustering_parameter;
@@ -124,6 +125,10 @@ int main(int argc, char** argv) {
                 .default_value(false)
                 .implicit_value(true)
                 .help("Stop after partitioning (Phase 1) without launching computation jobs");
+            cm.add_argument("--min-batch-cost")
+                .default_value(float(200))
+                .help("Minimum total cost per batch when assigning clusters to workers")
+                .scan<'f', float>();
 
             // TODO: support WCC in the future?
 
@@ -158,6 +163,7 @@ int main(int argc, char** argv) {
                 time_limit_per_cluster = cm.get<int>("--time-limit-per-cluster");
                 partitioned_clusters_dir = cm.get<std::string>("--partitioned-clusters-dir");
                 partition_only = cm.get<bool>("--partition-only");
+                min_batch_cost = cm.get<float>("--min-batch-cost");
 
                 /**
                  * TODO: checkpointing
@@ -172,7 +178,7 @@ int main(int argc, char** argv) {
                 fs::create_directories(logs_clusters_dir);
 
                 // Initialize LoadBalancer (this partitions clustering and initializes job queue)
-                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker, partitioned_clusters_dir, partition_only);
+                lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker, partitioned_clusters_dir, partition_only, min_batch_cost);
 
                 if (partition_only) {
                     std::cerr << "Partition-only mode: won't start the load balancer" << std::endl;
