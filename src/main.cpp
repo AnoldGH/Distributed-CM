@@ -126,7 +126,7 @@ int main(int argc, char** argv) {
                 .implicit_value(true)
                 .help("Stop after partitioning (Phase 1) without launching computation jobs");
             cm.add_argument("--min-batch-cost")
-                .default_value(float(200))
+                .default_value(float(1))
                 .help("Minimum total cost per batch when assigning clusters to workers")
                 .scan<'f', float>();
 
