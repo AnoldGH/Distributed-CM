@@ -172,6 +172,10 @@ int main(int argc, char** argv) {
                 mincut_type = cm.get<std::string>("--mincut-type");
                 time_limit_per_cluster = cm.get<int>("--time-limit-per-cluster");
                 partitioned_clusters_dir = cm.get<std::string>("--partitioned-clusters-dir");
+                if (partitioned_clusters_dir == "") {   // default: use work-dir clusters
+                    partitioned_clusters_dir = work_dir + "/clusters";
+                }
+
                 partition_only = cm.get<bool>("--partition-only");
                 min_batch_cost = cm.get<float>("--min-batch-cost");
 
@@ -191,8 +195,10 @@ int main(int argc, char** argv) {
                 lb = std::make_unique<LoadBalancer>(edgelist, existing_clustering, work_dir, output_file, log_level, use_rank_0_worker, partitioned_clusters_dir, partition_only, min_batch_cost);
 
                 // Signal handling - Slurm sends SIGTERM before SIGKILL a job
+                // Also handle SIGABRT for internal errors (e.g., memory corruption, assertion failures)
                 global_lb_ptr = lb.get();
                 std::signal(SIGTERM, signal_handler);   // register signal handler
+                std::signal(SIGABRT, signal_handler);   // save checkpoint on abort (e.g., free() errors)
 
                 if (partition_only) {
                     std::cerr << "Partition-only mode: won't start the load balancer" << std::endl;

@@ -88,48 +88,60 @@ void Worker::run() {
     logger.info("Starting output aggregation");
 
     std::string output_dir = work_dir + "/output/";
-    std::string worker_subdir = output_dir + "worker_" + std::to_string(rank) + "/";
-    std::string worker_output_file = output_dir + "worker_" + std::to_string(rank) + ".out";
 
-    std::ofstream out(worker_output_file);
-    out << "node_id,cluster_id\n";  // Header
+    // The worker tries to aggregate for other workers (in case total worker count changes)
+    int size, delegating_worker = rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    std::string worker_subdir = output_dir + "worker_" + std::to_string(delegating_worker) + "/";
+    std::string worker_output_file = output_dir + "worker_" + std::to_string(delegating_worker) + ".out";
 
-    int next_cluster_id = 0;
+    while (fs::exists(worker_subdir)) {
+        // Aggregation logic
+        std::ofstream out(worker_output_file);
+        out << "node_id,cluster_id\n";  // Header
 
-    // Iterate over all files in the worker-specific subdirectory
-    for (const auto& entry : fs::directory_iterator(worker_subdir)) {
-        if (entry.is_regular_file()) {
-            std::string input_file = entry.path().string();
-            std::ifstream in(input_file);
+        int next_cluster_id = 0;
 
-            std::string line;
-            std::getline(in, line);  // Skip header
+        // Iterate over all files in the worker-specific subdirectory
+        for (const auto& entry : fs::directory_iterator(worker_subdir)) {
+            if (entry.is_regular_file()) {
+                std::string input_file = entry.path().string();
+                std::ifstream in(input_file);
 
-            std::unordered_map<int, int> cluster_mapping;  // per-file mapping
+                std::string line;
+                std::getline(in, line);  // Skip header
 
-            while (std::getline(in, line)) {
-                std::stringstream ss(line);
-                std::string node_str, cluster_str;
-                std::getline(ss, node_str, ',');
-                std::getline(ss, cluster_str, ',');
+                std::unordered_map<int, int> cluster_mapping;  // per-file mapping
 
-                int node_id = std::stoi(node_str);
-                int cluster_id = std::stoi(cluster_str);
+                while (std::getline(in, line)) {
+                    std::stringstream ss(line);
+                    std::string node_str, cluster_str;
+                    std::getline(ss, node_str, ',');
+                    std::getline(ss, cluster_str, ',');
 
-                // Assign new global ID if this cluster_id hasn't been seen in this file
-                if (cluster_mapping.find(cluster_id) == cluster_mapping.end()) {
-                    cluster_mapping[cluster_id] = next_cluster_id++;
+                    int node_id = std::stoi(node_str);
+                    int cluster_id = std::stoi(cluster_str);
+
+                    // Assign new global ID if this cluster_id hasn't been seen in this file
+                    if (cluster_mapping.find(cluster_id) == cluster_mapping.end()) {
+                        cluster_mapping[cluster_id] = next_cluster_id++;
+                    }
+
+                    out << node_id << "," << cluster_mapping[cluster_id] << "\n";
                 }
 
-                out << node_id << "," << cluster_mapping[cluster_id] << "\n";
+                in.close();
             }
-
-            in.close();
         }
-    }
 
-    out.close();
-    logger.info("Output aggregation complete. Worker output: " + worker_output_file);
+        out.close();
+        logger.info("Output aggregation complete. Worker output: " + worker_output_file);
+
+        // Attempt to aggregate for the next worker (outside of range)
+        delegating_worker += (size - 1);
+        worker_subdir = output_dir + "worker_" + std::to_string(delegating_worker) + "/";
+        worker_output_file = output_dir + "worker_" + std::to_string(delegating_worker) + ".out";
+    }
 
     // Send AGGREGATE_DONE signal to load balancer
     int aggregate_msg = to_int(MessageType::AGGREGATE_DONE);
@@ -170,7 +182,7 @@ bool Worker::process_cluster(int cluster_id) {
         connectivity_modifier->main();  // run CM
 
         logger.info("Child process finishes cluster " + std::to_string(cluster_id));
-        exit(0);    // exits successfully
+        _exit(0);   // use _exit to avoid static destructor issues in forked process
     } else if (pid > 0) {    // control process
         int status;
         bool timed_out = false;
