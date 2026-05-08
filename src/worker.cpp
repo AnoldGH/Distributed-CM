@@ -259,6 +259,7 @@ std::pair<bool, int> Worker::process_cluster(int cluster_id, bool is_yielded) {
         }
 
         cc->main();  // run constrained clustering
+        cc->FlushLogFile();
 
         if (yield_pipe[1] >= 0) close(yield_pipe[1]);
         logger.info("Child process finishes cluster " + std::to_string(cluster_id));
