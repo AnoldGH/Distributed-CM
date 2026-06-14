@@ -2,7 +2,6 @@ build/
 datasets/
 external/
 work-dir*/
-.*/
 
 *.out
 *.log
